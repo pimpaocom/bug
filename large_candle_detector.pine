@@ -55,17 +55,6 @@ currentPct = currentRaw / open * 100.0      // body size in %
 lookback = math.min(i_lookbackCap, math.max(1, math.round(currentPct * i_barsPer1pct)))
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  COUNT PREVIOUS CLOSED CANDLES EXCEEDING THE 50% THRESHOLD
-// ══════════════════════════════════════════════════════════════════════════════
-
-halfSize   = currentRaw * 0.5
-aboveCount = 0
-
-for i = 1 to lookback
-    if math.abs(close[i] - open[i]) > halfSize
-        aboveCount += 1
-
-// ══════════════════════════════════════════════════════════════════════════════
 //  TIMEFRAME-SCALED MINIMUM CANDLE SIZE
 //  Power fit anchored at: 15m → 0.6%,  4h (240m) → 2.0%
 //  Formula : minSizePct = 0.6 * (tfMinutes / 15) ^ k
@@ -75,6 +64,25 @@ for i = 1 to lookback
 tfMinutes  = timeframe.in_seconds() / 60.0
 k          = math.log(2.0 / 0.6) / math.log(240.0 / 15.0)   // ≈ 0.4342414
 minSizePct = 0.6 * math.pow(tfMinutes / 15.0, k)
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  COUNT PREVIOUS CLOSED CANDLES EXCEEDING THE 50% THRESHOLD
+//
+//  A previous bar is only counted if BOTH conditions hold:
+//    1. Its body is larger than 50% of the current candle's body (original rule)
+//    2. Its body is itself >= minSizePct  — this prevents sub-minimum noise
+//       candles from suppressing the flag on lower timeframes, where a
+//       "large" candle and a typical candle sit much closer in absolute size.
+// ══════════════════════════════════════════════════════════════════════════════
+
+halfSize   = currentRaw * 0.5
+aboveCount = 0
+
+for i = 1 to lookback
+    prevRaw = math.abs(close[i] - open[i])
+    prevPct = prevRaw / open[i] * 100.0
+    if prevRaw > halfSize and prevPct >= minSizePct
+        aboveCount += 1
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  DETECTION LOGIC
@@ -93,9 +101,9 @@ plotshape(isLarge and barstate.isconfirmed,
      title="Confirmed large candle", style=shape.triangleup,
      location=location.belowbar, color=color.new(color.lime, 0), size=size.small)
 
-// Background tint on the live forming bar
-bgcolor(isLarge and barstate.isrealtime ? color.new(color.lime, 82) : na,
-     title="Live large-candle highlight")
+// Background tint on every flagged bar (historical + live)
+bgcolor(isLarge ? color.new(color.lime, 82) : na,
+     title="Large-candle highlight")
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  STATUS TABLE  (updates on every tick of the live bar)
