@@ -61,7 +61,13 @@ lookback = math.min(i_lookbackCap, math.max(1, math.round(currentPct * i_barsPer
 //  Exponent: k = log(2.0 / 0.6) / log(240 / 15) ≈ 0.4342414
 // ══════════════════════════════════════════════════════════════════════════════
 
-tfMinutes  = timeframe.in_seconds() / 60.0
+// timeframe.multiplier is always a valid int; for intraday charts the period
+// string is stored in minutes ("15" = 15m, "60" = 1h, "240" = 4h), so the
+// multiplier IS the minute count directly.  Daily/weekly/monthly need scaling.
+tfMinutes  = timeframe.isdaily   ? timeframe.multiplier * 1440.0  :
+             timeframe.isweekly  ? timeframe.multiplier * 10080.0 :
+             timeframe.ismonthly ? timeframe.multiplier * 43200.0 :
+             float(timeframe.multiplier)   // intraday – already in minutes
 k          = math.log(2.0 / 0.6) / math.log(240.0 / 15.0)   // ≈ 0.4342414
 minSizePct = 0.6 * math.pow(tfMinutes / 15.0, k)
 
@@ -96,14 +102,15 @@ isLarge = okSize and okRatio
 //  VISUAL CUES
 // ══════════════════════════════════════════════════════════════════════════════
 
-// Triangle under confirmed (closed) bars that met the criteria
-plotshape(isLarge and barstate.isconfirmed,
-     title="Confirmed large candle", style=shape.triangleup,
+// Paint the candle body + wicks lime — the most unmissable visual cue
+barcolor(isLarge ? color.lime : na, title="Large candle bar")
+
+// Triangle below the bar
+plotshape(isLarge, title="Large candle marker", style=shape.triangleup,
      location=location.belowbar, color=color.new(color.lime, 0), size=size.small)
 
-// Background tint on every flagged bar (historical + live)
-bgcolor(isLarge ? color.new(color.lime, 82) : na,
-     title="Large-candle highlight")
+// Background tint (50% opacity — clearly visible on any chart theme)
+bgcolor(isLarge ? color.new(color.lime, 50) : na, title="Large-candle highlight")
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  STATUS TABLE  (updates on every tick of the live bar)
