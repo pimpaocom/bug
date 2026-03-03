@@ -1,0 +1,213 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0
+// https://mozilla.org/MPL/2.0/
+
+//@version=5
+indicator("Large Candle Detector (Real-Time)", overlay=true, max_bars_back=500)
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  INPUTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+grp1 = "── Detection ──"
+
+i_minPct = input.float(
+     2.0, "Minimum candle size (%)", minval=0.1, step=0.1, group=grp1,
+     tooltip="Candles whose body (|open – current price| / open) is smaller than this % are discarded.")
+
+i_barsPer1pct = input.int(
+     6, "Look-back bars per 1% of size", minval=1, group=grp1,
+     tooltip="For every full 1% of candle body size, this many historical bars are added to the comparison window.\nExample: a 3% candle → 18 bars look-back.")
+
+i_maxAbove = input.int(
+     1, "Max previous bars allowed > 50% of current size", minval=0, group=grp1,
+     tooltip="Within the look-back window, at most this many closed candles may have a body larger than 50% of the current candle. If more exceed that threshold the flag is suppressed.")
+
+i_lookbackCap = input.int(
+     300, "Look-back window hard cap (bars)", minval=6, group=grp1,
+     tooltip="Upper limit on how many bars back the script will ever inspect, regardless of candle size.")
+
+grp2 = "── Alert ──"
+
+i_secsBefore = input.int(
+     10, "Seconds before bar close to fire alert", minval=1, group=grp2,
+     tooltip="The alert fires this many seconds before the current bar closes so you can act before the candle prints.")
+
+grp3 = "── Display ──"
+
+i_showTable = input.bool(true,  "Show status table",  group=grp3)
+i_tablePos  = input.string("Top Right", "Table position",
+     options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group=grp3)
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  CANDLE-SIZE CALCULATION
+//  • Forming bar  : open vs current (real-time) price   → close == last tick
+//  • Closed bars  : open vs close                       → same formula, just historical
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Enough history for the dynamic look-back
+max_bars_back(open,  500)
+max_bars_back(close, 500)
+
+currentRaw = math.abs(close - open)         // body size in price units
+currentPct = currentRaw / open * 100.0      // body size in %
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  DYNAMIC LOOK-BACK WINDOW
+//  Rule: 6 bars per 1% of candle size, capped at i_lookbackCap
+// ══════════════════════════════════════════════════════════════════════════════
+
+lookback = math.min(i_lookbackCap, math.max(1, math.round(currentPct * i_barsPer1pct)))
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  COUNT PREVIOUS CLOSED CANDLES EXCEEDING THE 50% THRESHOLD
+// ══════════════════════════════════════════════════════════════════════════════
+
+halfSize   = currentRaw * 0.5
+aboveCount = 0
+
+for i = 1 to lookback
+    if math.abs(close[i] - open[i]) > halfSize
+        aboveCount += 1
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  DETECTION LOGIC
+// ══════════════════════════════════════════════════════════════════════════════
+
+okSize  = currentPct >= i_minPct       // candle is large enough
+okRatio = aboveCount <= i_maxAbove     // not too many competing historical bars
+isLarge = okSize and okRatio
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  VISUAL CUES
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Triangle under confirmed (closed) bars that met the criteria
+plotshape(isLarge and barstate.isconfirmed,
+     title="Confirmed large candle", style=shape.triangleup,
+     location=location.belowbar, color=color.new(color.lime, 0), size=size.small)
+
+// Background tint on the live forming bar
+bgcolor(isLarge and barstate.isrealtime ? color.new(color.lime, 82) : na,
+     title="Live large-candle highlight")
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  STATUS TABLE  (updates on every tick of the live bar)
+// ══════════════════════════════════════════════════════════════════════════════
+
+var table tbl = na
+
+if i_showTable and barstate.isrealtime
+    tblPos = switch i_tablePos
+        "Top Right"    => position.top_right
+        "Top Left"     => position.top_left
+        "Bottom Right" => position.bottom_right
+        =>               position.bottom_left
+
+    tbl := table.new(tblPos, 2, 6,
+         bgcolor      = color.new(color.black, 65),
+         border_color = color.new(color.gray,  20),
+         border_width = 1,
+         frame_color  = color.new(color.gray,  20),
+         frame_width  = 1)
+
+    flagText  = isLarge ? "  FLAGGED  " : " NOT FLAGGED "
+    flagColor = isLarge ? color.lime    : color.red
+
+    // Row 0 – header
+    table.cell(tbl, 0, 0, "Large Candle Detector",
+         text_color=color.white, bgcolor=color.new(color.navy, 35),
+         text_size=size.small)
+    table.cell(tbl, 1, 0, flagText,
+         text_color=flagColor, bgcolor=color.new(color.navy, 35),
+         text_size=size.small)
+
+    // Row 1 – candle size
+    table.cell(tbl, 0, 1, "Candle size",
+         text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1, 1, str.tostring(currentPct, "#.##") + "%",
+         text_color = okSize ? color.white : color.red, text_size=size.small)
+
+    // Row 2 – minimum threshold
+    table.cell(tbl, 0, 2, "Min required",
+         text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1, 2, str.tostring(i_minPct, "#.##") + "%",
+         text_color=color.white, text_size=size.small)
+
+    // Row 3 – look-back window
+    table.cell(tbl, 0, 3, "Look-back window",
+         text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1, 3, str.tostring(lookback) + " bars",
+         text_color=color.white, text_size=size.small)
+
+    // Row 4 – how many previous bars exceed 50%
+    table.cell(tbl, 0, 4, "Prev bars > 50%",
+         text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1, 4,
+         str.tostring(aboveCount) + "  (max " + str.tostring(i_maxAbove) + ")",
+         text_color = okRatio ? color.lime : color.red, text_size=size.small)
+
+    // Row 5 – failure reason (blank when flagged)
+    reason = ""
+    if not okSize
+        reason := "Body < " + str.tostring(i_minPct, "#.##") + "% minimum"
+    else if not okRatio
+        reason := str.tostring(aboveCount) + " bars > 50% threshold"
+
+    table.cell(tbl, 0, 5, "Reason",
+         text_color=color.silver, text_size=size.small)
+    table.cell(tbl, 1, 5, isLarge ? "—" : reason,
+         text_color=color.orange, text_size=size.small)
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  ONE-SHOT ALERT — fires exactly once when the bar enters its near-close window
+//
+//  Mechanism:
+//    • nearClose becomes true when timenow >= time_close - N seconds
+//    • `fired` is reset to false at the start of every bar (while nearClose==false)
+//    • The alert() call happens only on the first tick where nearClose flips true
+//    • alert.freq_once_per_bar is a second safety net inside Pine's engine
+// ══════════════════════════════════════════════════════════════════════════════
+
+nearClose     = timenow >= time_close - i_secsBefore * 1000
+var bool fired = false
+
+if barstate.isrealtime
+    if not nearClose
+        fired := false                          // reset for each new bar
+
+    if nearClose and not fired
+        fired := true
+
+        string msg = ""
+
+        if isLarge
+            msg := "LARGE CANDLE  |  " + syminfo.ticker + "  [" + timeframe.period + "]\n" +
+                   "Body size    : " + str.tostring(currentPct, "#.##") + "%\n"           +
+                   "Look-back    : " + str.tostring(lookback)           + " bars\n"       +
+                   "Prev > 50%   : " + str.tostring(aboveCount)         +
+                   "  (max allowed: " + str.tostring(i_maxAbove)        + ")"
+
+        else if not okSize
+            msg := "NOT FLAGGED  |  " + syminfo.ticker + "  [" + timeframe.period + "]\n"   +
+                   "Reason: body too small  →  "                                             +
+                   str.tostring(currentPct, "#.##") + "%  (min: "                           +
+                   str.tostring(i_minPct,   "#.##") + "%)"
+
+        else
+            msg := "NOT FLAGGED  |  " + syminfo.ticker + "  [" + timeframe.period + "]\n"   +
+                   "Reason: " + str.tostring(aboveCount)                                     +
+                   " previous bar(s) exceed 50% of current body\n"                          +
+                   "(max allowed: " + str.tostring(i_maxAbove)                              +
+                   "  |  look-back: " + str.tostring(lookback) + " bars)"
+
+        alert(msg, alert.freq_once_per_bar)
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  ALERTCONDITION — lets users wire the script into TradingView's Alerts panel
+//  (positive leg only; the dynamic alert() above covers both positive & negative)
+// ══════════════════════════════════════════════════════════════════════════════
+
+alertcondition(
+     isLarge and nearClose and barstate.isrealtime,
+     title   = "Large Candle Detected",
+     message = "Large candle forming on {{ticker}} [{{interval}}] — body {{close}} vs open {{open}}")
