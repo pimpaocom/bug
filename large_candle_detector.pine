@@ -10,10 +10,6 @@ indicator("Large Candle Detector (Real-Time)", overlay=true, max_bars_back=500)
 
 grp1 = "── Detection ──"
 
-i_minPct = input.float(
-     2.0, "Minimum candle size (%)", minval=0.1, step=0.1, group=grp1,
-     tooltip="Candles whose body (|open – current price| / open) is smaller than this % are discarded.")
-
 i_barsPer1pct = input.int(
      6, "Look-back bars per 1% of size", minval=1, group=grp1,
      tooltip="For every full 1% of candle body size, this many historical bars are added to the comparison window.\nExample: a 3% candle → 18 bars look-back.")
@@ -70,10 +66,21 @@ for i = 1 to lookback
         aboveCount += 1
 
 // ══════════════════════════════════════════════════════════════════════════════
+//  TIMEFRAME-SCALED MINIMUM CANDLE SIZE
+//  Power fit anchored at: 15m → 0.6%,  4h (240m) → 2.0%
+//  Formula : minSizePct = 0.6 * (tfMinutes / 15) ^ k
+//  Exponent: k = log(2.0 / 0.6) / log(240 / 15) ≈ 0.4342414
+// ══════════════════════════════════════════════════════════════════════════════
+
+tfMinutes  = timeframe.in_seconds() / 60.0
+k          = math.log(2.0 / 0.6) / math.log(240.0 / 15.0)   // ≈ 0.4342414
+minSizePct = 0.6 * math.pow(tfMinutes / 15.0, k)
+
+// ══════════════════════════════════════════════════════════════════════════════
 //  DETECTION LOGIC
 // ══════════════════════════════════════════════════════════════════════════════
 
-okSize  = currentPct >= i_minPct       // candle is large enough
+okSize  = currentPct >= minSizePct     // candle is large enough
 okRatio = aboveCount <= i_maxAbove     // not too many competing historical bars
 isLarge = okSize and okRatio
 
@@ -130,7 +137,7 @@ if i_showTable and barstate.isrealtime
     // Row 2 – minimum threshold
     table.cell(tbl, 0, 2, "Min required",
          text_color=color.silver, text_size=size.small)
-    table.cell(tbl, 1, 2, str.tostring(i_minPct, "#.##") + "%",
+    table.cell(tbl, 1, 2, str.tostring(minSizePct, "#.##") + "%",
          text_color=color.white, text_size=size.small)
 
     // Row 3 – look-back window
@@ -149,7 +156,7 @@ if i_showTable and barstate.isrealtime
     // Row 5 – failure reason (blank when flagged)
     reason = ""
     if not okSize
-        reason := "Body < " + str.tostring(i_minPct, "#.##") + "% minimum"
+        reason := "Body < " + str.tostring(minSizePct, "#.##") + "% minimum"
     else if not okRatio
         reason := str.tostring(aboveCount) + " bars > 50% threshold"
 
@@ -190,8 +197,8 @@ if barstate.isrealtime
         else if not okSize
             msg := "NOT FLAGGED  |  " + syminfo.ticker + "  [" + timeframe.period + "]\n"   +
                    "Reason: body too small  →  "                                             +
-                   str.tostring(currentPct, "#.##") + "%  (min: "                           +
-                   str.tostring(i_minPct,   "#.##") + "%)"
+                   str.tostring(currentPct,  "#.##") + "%  (min: "                          +
+                   str.tostring(minSizePct, "#.##") + "%)"
 
         else
             msg := "NOT FLAGGED  |  " + syminfo.ticker + "  [" + timeframe.period + "]\n"   +
